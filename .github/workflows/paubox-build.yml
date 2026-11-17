@@ -7,7 +7,7 @@ on:
     branches:
       - master
   schedule:
-    - cron: "0 13 1 * *" # monthly, picks up Go patch releases
+    - cron: "0 13 1 * *" # monthly: Go patch rebuild + upstream release check
   workflow_dispatch:
 
 permissions:
@@ -17,14 +17,16 @@ env:
   BUILD_TAGS: nosystemd,nodocker,nokubernetes
 
 jobs:
-  build:
+  # Runs upstream and dependency code, so it gets a read-only token and keeps no credentials.
+  paubox-build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      go_version: ${{ steps.v.outputs.go_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
@@ -33,9 +35,8 @@ jobs:
       - name: Version
         id: v
         run: |
-          version="$(cat VERSION)-pb-$(go env GOVERSION)"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat VERSION)-pb-$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
 
       - name: govulncheck
         run: |
@@ -61,31 +62,106 @@ jobs:
           tar -czf "dist/${tarball}" -C dist postfix_exporter
           (cd dist && sha256sum "${tarball}" > checksums.txt && cat checksums.txt)
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+
+  # Holds the write and OIDC permissions; runs no repository code.
+  release:
+    needs: paubox-build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: paubox-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.paubox-build.outputs.version }}
+      GO_VERSION: ${{ needs.paubox-build.outputs.go_version }}
+    steps:
       - name: Check for existing release
         id: existing
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.v.outputs.tag }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Attest
-        if: steps.existing.outputs.publish == 'true'
+      - if: steps.existing.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+
+      - if: steps.existing.outputs.publish == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/postfix_exporter_*_linux_amd64.tar.gz
 
+      # Draft first: with immutable releases, assets can't be added after publishing.
       - name: Release
         if: steps.existing.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.v.outputs.tag }}
         run: |
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
-            --notes "Upstream $(cat VERSION), built with $(go env GOVERSION), tags ${BUILD_TAGS}. Verify: gh attestation verify <tarball> -R ${GITHUB_REPOSITORY}" \
+          tag="v${VERSION}"
+          notes="Upstream ${VERSION%%-pb-*} built with ${GO_VERSION}, tags ${BUILD_TAGS}.
+
+          Verify before pinning in Salt:
+          gh attestation verify postfix_exporter_${VERSION}_linux_amd64.tar.gz -R ${GH_REPO} --signer-workflow ${GH_REPO}/.github/workflows/paubox-build.yml --source-ref refs/heads/master"
+          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$notes" \
             dist/postfix_exporter_*_linux_amd64.tar.gz dist/checksums.txt
+          gh release edit "$tag" --draft=false
+
+  upstream-check:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Open an issue when upstream has a newer release
+        run: |
+          ours="v$(gh api "repos/${GH_REPO}/contents/VERSION" --jq .content | base64 -d | tr -d '[:space:]')"
+          latest="$(gh api repos/Hsn723/postfix_exporter/releases/latest --jq .tag_name)"
+          echo "ours=${ours} upstream=${latest}"
+          title="Sync upstream ${latest}"
+          if [ "$ours" != "$latest" ] && [ -z "$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[].number')" ]; then
+            gh issue create --title "$title" --body "Upstream released ${latest}; master is ${ours}. Follow the sync procedure in CLAUDE.md."
+          fi
+
+      # Public repos lose scheduled workflows after 60 days without commits.
+      - name: Keep the schedule enabled
+        run: gh api -X PUT "repos/${GH_REPO}/actions/workflows/paubox-build.yml/enable"
+
+  notify-failure:
+    needs: [paubox-build, release, upstream-check]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open an issue for the failed run
+        run: |
+          title="Paubox build failed"
+          if [ -z "$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[].number')" ]; then
+            gh issue create --title "$title" --body "Run: ${RUN_URL}"
+          else
+            gh issue comment "$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number')" --body "Again: ${RUN_URL}"
+          fi
