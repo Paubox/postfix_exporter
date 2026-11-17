@@ -95,8 +95,9 @@ Key Go modules (see `go.mod` for the authoritative list):
 
 ## Paubox notes
 
+- **This repo is public.** Commits, PRs, issues and release notes must not name hosts, IPs, internal repos, vulnerability counts or rollout details. Keep those in internal repos.
 - No Paubox code changes: this repo is upstream source plus `paubox-build.yml`. Fixes go upstream. `go.mod` changes only through upstream merges, so Dependabot covers GitHub Actions only.
-- `paubox-build.yml` builds, attests and releases `v<VERSION>-pb-<go version>`; Salt (`postfix/exporter`) pins that release by sha256. It reruns monthly for Go patches, opens a `Sync upstream vX` issue when upstream releases, and opens a `Paubox build failed` issue on failure.
+- `paubox-build.yml` builds, attests and releases `v<VERSION>-pb-<go version>`; our deploy config pins that release by sha256. It reruns monthly for Go patches, opens a `Sync upstream vX` issue when upstream releases, and opens a `Paubox build failed` issue on failure.
 - Removed upstream workflows: `release.yml` and `helm-release.yml` (publish to upstream's registries), `main.yml` (upstream's release dry-run, fails here) and `helm.yml` (we don't ship Helm).
 - Sync procedure:
   1. With remote `upstream` = https://github.com/Hsn723/postfix_exporter.git: `git fetch upstream --tags && git switch -c chore/sync-upstream-vX.Y.Z origin/master && git merge vX.Y.Z`
