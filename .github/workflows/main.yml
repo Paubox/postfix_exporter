@@ -8,86 +8,18 @@ on:
   pull_request:
     branches:
       - master
-env:
-  go-version: stable
 permissions:
+  actions: read
   contents: read
+  pull-requests: write
+  security-events: write
 jobs:
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.go-version }}
-      - name: Build
-        run: make build
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.go-version }}
-      - name: Lint
-        run: make lint
-      - name: Lint
-        run: make lint
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.go-version }}
-      - name: Test
-        run: make test
-  check-goreleaser-config:
-    name: Check goreleaser.yml
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.go-version }}
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: check -f .goreleaser.yml
-  dry-run:
-    name: Dry-run release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: anchore/sbom-action/download-syft@v0.20.9
-      - name: Setup go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.go-version }}
-      - name: Setup latest version tag
-        run: |
-          echo "GORELEASER_CURRENT_TAG=$(git describe --tags --abbrev=0 --match "v*" || echo v0.0.0)" >> $GITHUB_ENV
-      - name: Install build dependencies
-        run: |
-          make libsystemd-dev
-          make gcc-aarch64-linux-gnu
-      - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: --snapshot --skip=sign,publish --clean
-      - name: Test built containers
-        run: make container-structure-test
+  verify:
+    uses: hsn723/actions/.github/workflows/verify.yml@7e09dd3503c2a673762de2853f0889dc39330a67 # v1.0.44
+    secrets: inherit
+    with:
+      lint-pre: |
+        make libsystemd-dev
+      additional-dry-run-setup: |
+        make libsystemd-dev
+        make gcc-aarch64-linux-gnu
