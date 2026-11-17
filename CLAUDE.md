@@ -11,11 +11,11 @@ Guidance for Claude Code sessions working in this repository.
 
 Metrics are served over HTTP on port `9154` by default at `/metrics`.
 
-This is an upstream fork (origin `Hsn723/postfix_exporter`) mirrored under Paubox. The Paubox copy currently tracks upstream `master`; downstream changes should be kept minimal and clearly identified.
+This is a fork of `Hsn723/postfix_exporter` that tracks upstream release tags with no Paubox code changes; see Paubox notes.
 
 ## Layout
 
-Top-level Go module: `github.com/hsn723/postfix_exporter` (Go 1.24).
+Top-level Go module: `github.com/hsn723/postfix_exporter` (Go 1.26).
 
 - `main.go` — entry point. Defines kingpin CLI flags, wires log sources to exporters, configures the Prometheus HTTP server (via `prometheus/exporter-toolkit`), and optionally runs a watchdog loop that recycles the exporter when a log source becomes unhealthy.
 - `exporter/` — the core `PostfixExporter` Prometheus collector. Parses Postfix log lines and translates them into metrics. Service-label options (`WithCleanupLabels`, `WithSmtpLabels`, etc.) handle Postfix's user-defined service labels from `master.cf`.
@@ -29,7 +29,7 @@ Top-level Go module: `github.com/hsn723/postfix_exporter` (Go 1.24).
 - `charts/postfix-exporter/` — Helm chart published to `https://hsn723.github.io/postfix_exporter`.
 - `Dockerfile` — `FROM scratch`, expects a prebuilt `postfix_exporter` binary copied in. The published image is built without docker/systemd/kubernetes support.
 - `Makefile` — top-level build, test, lint, and container-test targets.
-- `VERSION` — embedded into the binary via `//go:embed` as a fallback when `-ldflags -X main.version=...` is not set.
+- `VERSION` — embedded into the binary via `//go:embed` as a fallback when `-ldflags -X github.com/prometheus/common/version.Version=...` is not set.
 - `cst.yaml`, `ct.yaml` — container-structure-test and chart-testing configs used in CI.
 
 ## Build, run, test
@@ -87,13 +87,20 @@ Key Go modules (see `go.mod` for the authoritative list):
 ## Conventions
 
 - Build tags `nosystemd`, `nodocker`, `nokubernetes` gate optional backends. New backend code must register its factory via a build-tagged `init()` and implement `logsource.LogSourceFactory` (including the unexported `requireEmbed()` marker to force embedding `LogSourceFactoryDefaults`).
-- Version metadata is injected at build time with `-ldflags "-X main.version=... -X main.commit=... -X main.date=... -X main.builtBy=..."`. The embedded `VERSION` file is only a fallback.
+- Version metadata is injected at build time with `-ldflags "-X github.com/prometheus/common/version.Version=... -X github.com/prometheus/common/version.Revision=..."`. The embedded `VERSION` file is only a fallback.
 - Tests follow standard Go conventions: `*_test.go` next to the code under test, using `testify`. The `-race` flag is required in CI.
 - Lint runs through `pre-commit`; install hooks with `make lint` before pushing changes.
-- Releases are produced by GoReleaser (`.goreleaser.yml`) into four flavors: minimal, `_docker`, `_systemd`, and `_aio` (everything). Container images are signed and published to `ghcr.io/hsn723/postfix_exporter`.
+- Upstream releases with GoReleaser (`.goreleaser.yml`) to `ghcr.io/hsn723/postfix_exporter`. This repo does not: see Paubox notes.
 - Postfix 2.x is no longer supported; the last release supporting it is `0.14.0`.
 
 ## Paubox notes
 
-- The fork is mirrored from upstream; before adding patches, check whether the change can be contributed upstream first.
-- When deploying via Helm, prefer the published chart in `charts/postfix-exporter/` rather than maintaining a Paubox-internal copy.
+- **This repo is public.** Commits, PRs, issues and release notes must not name hosts, IPs, internal repos, vulnerability counts or rollout details. Keep those in internal repos.
+- No Paubox code changes: this repo is upstream source plus `paubox-build.yml`. Fixes go upstream. `go.mod` changes only through upstream merges, so Dependabot covers GitHub Actions only.
+- `paubox-build.yml` builds, attests and releases `v<VERSION>-pb-<go version>`; our deploy config pins that release by sha256. It reruns monthly for Go patches, opens a `Sync upstream vX` issue when upstream releases, and opens a `Paubox build failed` issue on failure.
+- Removed upstream workflows: `release.yml` and `helm-release.yml` (publish to upstream's registries), `main.yml` (upstream's release dry-run, fails here) and `helm.yml` (we don't ship Helm).
+- Sync procedure:
+  1. With remote `upstream` = https://github.com/Hsn723/postfix_exporter.git: `git fetch upstream --tags && git switch -c chore/sync-upstream-vX.Y.Z origin/master && git merge vX.Y.Z`
+  2. Resolve modify/delete conflicts by keeping the four workflows above deleted (`git rm`).
+  3. Open a PR. After merge, the build publishes the release.
+  4. Before bumping the deploy pin, run the `gh attestation verify` command from the release notes, then copy the sha256 from `checksums.txt`.

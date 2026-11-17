@@ -31,6 +31,7 @@ These options can be used when starting the `postfix_exporter`
 | `--postfix.showq_network` | Network protocol to use to connect to showq         | `"unix"`                          |
 | `--postfix.logfile_path` | Path where Postfix writes log entries                | `/var/log/mail.log`               |
 | `--postfix.logfile_must_exist` | Fail if the log file doesn't exist.            | `true`                            |
+| `--postfix.logfile_poll` | Poll for file changes instead of using inotify.      | `false`                           |
 | `--postfix.logfile_debug` | Enable debug logging for the log file.              | `false`                           |
 | `--postfix.cleanup_service_label` | User-defined service labels for the cleanup service. | `cleanup`                |
 | `--postfix.lmtp_service_label`    | User-defined service labels for the lmtp service.    | `lmtp`                   |
@@ -40,6 +41,7 @@ These options can be used when starting the `postfix_exporter`
 | `--postfix.smtpd_service_label`   | User-defined service labels for the smtpd service.   | `smtpd`                  |
 | `--postfix.bounce_service_label`  | User-defined service labels for the bounce service.  | `bounce`                 |
 | `--postfix.virtual_service_label` | User-defined service labels for the virtual service. | `virtual`                |
+| `--postfix.postscreen_service_label` | User-defined service labels for the postscreen service. | `postscreen`         |
 | `--log.unsupported`      | Log all unsupported lines                            | `false`                           |
 | `--log.level`            | Logging level                                        | `"info"`                          |
 | `--log.format`           | Logging format                                       | `"logfmt"`                        |
@@ -55,6 +57,7 @@ These options can be used when starting the `postfix_exporter`
 | `--kubernetes.service `       | Name of the service selecting the postfix pods  | `""`                              |
 | `--kubernetes.container`      | Container name to read logs from (default: all) | `""`                              |
 | `--kubernetes.kubeconfig`     | Path to kubeconfig file if out of cluster       | `"~/.kube/config"`                |
+| `--watchdog` | Use watchdog to monitor log sources and automatically reload | `false` |
 
 - The `--docker.*` flags are not available for binaries built with the `nodocker` build tag
 - The `--systemd.*` flags are not available for binaries built with the `nosystemd` build tag
@@ -97,7 +100,7 @@ default container ID is `postfix`, but can be customized with the
 
 The default is to connect to the local Docker, but this can be
 customized using [the `DOCKER_HOST` and
-similar](https://pkg.go.dev/github.com/docker/docker/client?tab=doc#NewEnvClient)
+similar](https://pkg.go.dev/github.com/moby/moby/client?tab=doc#New)
 environment variables.
 
 ## Events from log file
