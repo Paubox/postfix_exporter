@@ -95,5 +95,6 @@ Key Go modules (see `go.mod` for the authoritative list):
 
 ## Paubox notes
 
-- The fork is mirrored from upstream; before adding patches, check whether the change can be contributed upstream first.
-- When deploying via Helm, prefer the published chart in `charts/postfix-exporter/` rather than maintaining a Paubox-internal copy.
+- No Paubox code changes: this repo is upstream source plus `paubox-build.yml`. Fixes go upstream; update by merging an upstream release tag.
+- `paubox-build.yml` builds, attests and releases `v<VERSION>-pb-<go version>`; Salt (`postfix/exporter`) pins that release by sha256.
+- Upstream's `release.yml` and `helm-release.yml` are removed because they publish to upstream's registries.

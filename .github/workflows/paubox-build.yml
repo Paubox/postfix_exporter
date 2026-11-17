@@ -1,0 +1,91 @@
+name: Paubox build
+
+# Builds unmodified upstream source with the current Go patch release; see CLAUDE.md.
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: "0 13 1 * *" # monthly, picks up Go patch releases
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_TAGS: nosystemd,nodocker,nokubernetes
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Version
+        id: v
+        run: |
+          version="$(cat VERSION)-pb-$(go env GOVERSION)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck -tags "$BUILD_TAGS" ./...
+
+      # Upstream's kubernetes test file has no build tag, so tests run with upstream's own tags.
+      - name: Test
+        run: go test -count=1 -race -tags nosystemd,nodocker ./...
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -tags "$BUILD_TAGS" \
+            -ldflags "-s -w -X github.com/prometheus/common/version.Version=${VERSION} -X github.com/prometheus/common/version.Revision=${GITHUB_SHA}" \
+            -o dist/postfix_exporter .
+          tarball="postfix_exporter_${VERSION}_linux_amd64.tar.gz"
+          tar -czf "dist/${tarball}" -C dist postfix_exporter
+          (cd dist && sha256sum "${tarball}" > checksums.txt && cat checksums.txt)
+
+      - name: Check for existing release
+        id: existing
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attest
+        if: steps.existing.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/postfix_exporter_*_linux_amd64.tar.gz
+
+      - name: Release
+        if: steps.existing.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "Upstream $(cat VERSION), built with $(go env GOVERSION), tags ${BUILD_TAGS}. Verify: gh attestation verify <tarball> -R ${GITHUB_REPOSITORY}" \
+            dist/postfix_exporter_*_linux_amd64.tar.gz dist/checksums.txt
