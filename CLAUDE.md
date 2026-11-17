@@ -103,4 +103,4 @@ Key Go modules (see `go.mod` for the authoritative list):
   1. With remote `upstream` = https://github.com/Hsn723/postfix_exporter.git: `git fetch upstream --tags && git switch -c chore/sync-upstream-vX.Y.Z origin/master && git merge vX.Y.Z`
   2. Resolve modify/delete conflicts by keeping the four workflows above deleted (`git rm`).
   3. Open a PR. After merge, the build publishes the release.
-  4. Before bumping Salt, run the `gh attestation verify` command from the release notes, then copy the sha256 from `checksums.txt`.
+  4. Before bumping the deploy pin, run the `gh attestation verify` command from the release notes, then copy the sha256 from `checksums.txt`.
